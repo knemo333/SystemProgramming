@@ -27,15 +27,24 @@ bool g_Exit = false;
 std::unordered_map<int, bool> g_inputMap;
 eStatus g_currentMode = eStatus::MENU;
 int g_cursorIndex = 0;
+bool g_Changed = false;
+LARGE_INTEGER frequency;
+LARGE_INTEGER startTick;
+LARGE_INTEGER endTick;
+double elipseTick;
+double deltaTime;
 
 std::wstring ReadSettingFile();
 void ReadFiles(std::vector<fs::path>& vec);
-void CheckInput();
+void Input();
 void Update();
 void Render();
 void PrintList();
 void PrintUI();
+bool CheckDiff(int index);
+void ApplyDiff(int index);
 void ShowFile(int index);
+void MeasureTime();
 
 void gotoxy(int x, int y)
 {
@@ -51,13 +60,16 @@ int main()
 	ConsoleCursor.bVisible = false;
 	ConsoleCursor.dwSize = 1;
 	SetConsoleCursorInfo(GetStdHandle(STD_OUTPUT_HANDLE), &ConsoleCursor);
+	QueryPerformanceFrequency(&frequency);
+	QueryPerformanceCounter(&startTick);	// 초기 시작 값
 
 	g_dir = ReadSettingFile();
 	ReadFiles(g_jsonPaths);
 
 	while (!g_Exit)
 	{
-		CheckInput();
+		MeasureTime();
+		Input();
 		Update();
 		Render();
 	}
@@ -85,9 +97,9 @@ void ReadFiles(std::vector<fs::path>& vec)
 	{
 		const fs::directory_entry& entry = *iter;
 
-		std::string temp = entry.path().string();
+		std::string pathString = entry.path().string();
 
-		if (std::regex_match(temp, re))
+		if (std::regex_match(pathString, re))
 		{
 			g_jsonPaths.push_back(entry.path());
 			g_jsonTime.insert({ entry.path(), entry.last_write_time() });
@@ -97,7 +109,7 @@ void ReadFiles(std::vector<fs::path>& vec)
 	}
 }
 
-void CheckInput()
+void Input()
 {
 	for (auto& e : g_inputMap)
 	{
@@ -155,12 +167,19 @@ void Update()
 			{
 				system("cls");
 				g_currentMode = eStatus::JSON;
+				ShowFile(g_cursorIndex);
+				ApplyDiff(g_cursorIndex);
 			}
 		}
 	}
 
 	if (g_currentMode == eStatus::JSON)
 	{
+		if (CheckDiff(g_cursorIndex))
+		{
+			g_Changed = true;
+		}
+
 		if (g_inputMap[VK_ESCAPE])
 		{
 			system("cls");
@@ -169,7 +188,12 @@ void Update()
 
 		if (g_inputMap[VK_RETURN])
 		{
-
+			if (g_Changed)
+			{
+				g_Changed = false;
+				system("cls");
+				ShowFile(g_cursorIndex);
+			}
 		}
 	}
 
@@ -198,7 +222,6 @@ void Render()
 			printf("←");
 			break;
 		case eStatus::JSON:
-			ShowFile(g_cursorIndex);
 			break;
 		default:
 			break;
@@ -219,7 +242,7 @@ void PrintList()
 
 void PrintUI()
 {
-	gotoxy(0, 20);
+	gotoxy(0, 25);
 
 	switch (g_currentMode)
 	{
@@ -232,6 +255,65 @@ void PrintUI()
 		default:
 			break;
 	}
+
+	if (g_Changed && g_currentMode == eStatus::JSON)
+	{
+		gotoxy(0, 24);
+		
+		std::cout << g_jsonPaths[g_cursorIndex].filename().string() << " 파일이 수정됐습니다. 엔터를 누르면 다시 로드합니다.";
+	}
+	else
+	{
+		gotoxy(0, 24);
+		printf("                                                                           ");
+	}
+}
+
+bool CheckDiff(int index)
+{
+	fs::directory_iterator iter(g_dir);
+
+	fs::path currentPath = g_jsonPaths[g_cursorIndex];
+
+	while (iter != fs::end(iter))
+	{
+		const fs::directory_entry& entry = *iter;
+
+		std::string pathString = entry.path().string();
+
+		if (pathString.compare(currentPath.string()) == 0)
+		{
+			if (g_jsonTime.at(currentPath) != entry.last_write_time())
+			{
+				return true;
+			}
+		}
+
+		++iter;
+	}
+	return false;
+}
+
+void ApplyDiff(int index)
+{
+	fs::directory_iterator iter(g_dir);
+
+	fs::path currentPath = g_jsonPaths[g_cursorIndex];
+
+	while (iter != fs::end(iter))
+	{
+		const fs::directory_entry& entry = *iter;
+
+		std::string pathString = entry.path().string();
+
+		if (pathString.compare(currentPath.string()) == 0)
+		{
+			g_jsonTime[currentPath] = entry.last_write_time();
+			return;
+		}
+
+		++iter;
+	}
 }
 
 void ShowFile(int index)
@@ -239,6 +321,7 @@ void ShowFile(int index)
 	FILE* fp;
 	fopen_s(&fp, g_jsonPaths[g_cursorIndex].string().c_str(), "rb"); // non-Windows use "r"
 	const int bufferLength = 65536;
+	//char* readBuffer = new char(bufferLength);
 	char readBuffer[bufferLength] = { 0, };
 #if 0
 	//RapidJson의 FileReadStream을 이용해서 버퍼를 읽는다.
@@ -267,4 +350,15 @@ void ShowFile(int index)
 // 		}
 		std::cout << std::endl;
 	}
+}
+
+void MeasureTime()
+{
+	QueryPerformanceCounter(&endTick);
+
+	elipseTick = (double)(endTick.QuadPart - startTick.QuadPart) /
+		(double)(frequency.QuadPart);
+	deltaTime = elipseTick * 1000;	// 1000을 곱하면 ms 단위 안곱하면 s단위
+
+	QueryPerformanceCounter(&startTick);
 }
