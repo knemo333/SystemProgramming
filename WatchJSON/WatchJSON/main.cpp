@@ -1,3 +1,6 @@
+#include "rapidjson/filereadstream.h"
+#include "rapidjson/document.h"
+
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -6,16 +9,15 @@
 #include <unordered_map>
 #include <regex>
 
-#include "rapidjson/document.h"
-
 namespace fs = std::filesystem;
 
 constexpr int BUFFERSIZE = 256;
 constexpr int CURSOROFFSET_X = 20;
 
-enum class eMenu
+enum class eStatus
 {
-	LIST,
+	MENU,
+	JSON
 };
 
 std::wstring g_dir;
@@ -23,7 +25,7 @@ std::vector<fs::path> g_jsonPaths;
 std::unordered_map<fs::path, fs::file_time_type> g_jsonTime;
 bool g_Exit = false;
 std::unordered_map<int, bool> g_inputMap;
-eMenu g_currentMode = eMenu::LIST;
+eStatus g_currentMode = eStatus::MENU;
 int g_cursorIndex = 0;
 
 std::wstring ReadSettingFile();
@@ -32,6 +34,8 @@ void CheckInput();
 void Update();
 void Render();
 void PrintList();
+void PrintUI();
+void ShowFile(int index);
 
 void gotoxy(int x, int y)
 {
@@ -80,13 +84,13 @@ void ReadFiles(std::vector<fs::path>& vec)
 	while (iter != fs::end(iter))
 	{
 		const fs::directory_entry& entry = *iter;
-		
+
 		std::string temp = entry.path().string();
 
 		if (std::regex_match(temp, re))
 		{
-			g_jsonPaths.push_back(entry.path().filename());
-			g_jsonTime.insert({ entry.path(), entry.last_write_time()});
+			g_jsonPaths.push_back(entry.path());
+			g_jsonTime.insert({ entry.path(), entry.last_write_time() });
 		}
 
 		++iter;
@@ -114,35 +118,62 @@ void CheckInput()
 	{
 		g_inputMap[VK_RETURN] = true;
 	}
+
+	if (GetAsyncKeyState(VK_ESCAPE) & 1)
+	{
+		g_inputMap[VK_ESCAPE] = true;
+	}
 }
 
 void Update()
 {
-	if (g_inputMap[VK_UP])
+	if (g_currentMode == eStatus::MENU)
 	{
-		--g_cursorIndex;
-		if (g_cursorIndex < 0)
+		if (g_inputMap[VK_UP])
 		{
-			g_cursorIndex = g_jsonPaths.size();
+			--g_cursorIndex;
+			if (g_cursorIndex < 0)
+			{
+				g_cursorIndex = g_jsonPaths.size();
+			}
+		}
+
+		if (g_inputMap[VK_DOWN])
+		{
+			++g_cursorIndex;
+			g_cursorIndex %= g_jsonPaths.size() + 1;
+		}
+
+		if (g_inputMap[VK_RETURN])
+		{
+			if (g_cursorIndex == g_jsonPaths.size())
+			{
+				g_Exit = true;
+			}
+
+			if (g_cursorIndex < g_jsonPaths.size())
+			{
+				system("cls");
+				g_currentMode = eStatus::JSON;
+			}
 		}
 	}
 
-	if (g_inputMap[VK_DOWN])
+	if (g_currentMode == eStatus::JSON)
 	{
-		++g_cursorIndex;
-		g_cursorIndex %= g_jsonPaths.size() + 1;
-	}
-
-	if (g_inputMap[VK_RETURN])
-	{
-		if (g_cursorIndex == g_jsonPaths.size())
+		if (g_inputMap[VK_ESCAPE])
 		{
-			g_Exit = true;
+			system("cls");
+			g_currentMode = eStatus::MENU;
 		}
 
+		if (g_inputMap[VK_RETURN])
+		{
 
-
+		}
 	}
+
+
 }
 
 void Render()
@@ -151,33 +182,89 @@ void Render()
 
 	switch (g_currentMode)
 	{
-		case eMenu::LIST:
+		case eStatus::MENU:
 			PrintList();
+			for (int i = 0; i < g_jsonPaths.size() + 1; ++i)
+			{
+				if (i == g_cursorIndex)
+				{
+					continue;
+				}
+
+				gotoxy(CURSOROFFSET_X, i);
+				printf("  ");
+			}
+			gotoxy(CURSOROFFSET_X, g_cursorIndex);
+			printf("←");
+			break;
+		case eStatus::JSON:
+			ShowFile(g_cursorIndex);
 			break;
 		default:
 			break;
 	}
 
-	for (int i = 0; i < g_jsonPaths.size() + 1; ++i)
-	{
-		if (i == g_cursorIndex)
-		{
-			continue;
-		}
-
-		gotoxy(CURSOROFFSET_X, i);
-		std::cout << "  ";
-	}
-	gotoxy(CURSOROFFSET_X, g_cursorIndex);
-	std::cout << "←";
+	PrintUI();
 }
 
 void PrintList()
 {
-	for (auto e : g_jsonPaths)
+	for (auto& e : g_jsonPaths)
 	{
-		std::cout << e.string() << std::endl;
+		std::cout << e.filename().string() << std::endl;
 	}
 
-	std::cout << "종료" << std::endl;
+	printf("종료\n");
+}
+
+void PrintUI()
+{
+	gotoxy(0, 20);
+
+	switch (g_currentMode)
+	{
+		case eStatus::MENU:
+			printf("[↓] : 아래 , [↑] : 위 , [Enter] : 선택");
+			break;
+		case eStatus::JSON:
+			printf("[ESC] : 나가기");
+			break;
+		default:
+			break;
+	}
+}
+
+void ShowFile(int index)
+{
+	FILE* fp;
+	fopen_s(&fp, g_jsonPaths[g_cursorIndex].string().c_str(), "rb"); // non-Windows use "r"
+	const int bufferLength = 65536;
+	char readBuffer[bufferLength] = { 0, };
+#if 0
+	//RapidJson의 FileReadStream을 이용해서 버퍼를 읽는다.
+	FileReadStream is(fp, readBuffer, sizeof(readBuffer));
+	Document doc;
+	doc.ParseStream(is);
+	fclose(fp);
+#else
+	size_t fileSize = fread(readBuffer, 1, bufferLength, fp);
+	fclose(fp);
+	rapidjson::Document doc;
+	doc.Parse(readBuffer);
+#endif
+
+	if (doc.HasMember("value"))
+	{
+		rapidjson::Value& v = doc["value"];
+		std::cout << "value: " << v.GetString() << std::endl;
+//		std::cout << "age: " << doc["age"].GetInt() << std::endl;
+// 
+// 		std::cout << "arr: ";
+// 		const rapidjson::Value& arr = doc["arr"];
+// 		for (rapidjson::SizeType i = 0; i < arr.Size(); i++)
+// 		{
+// 			std::cout << arr[i].GetInt() << "  ";
+// 		}
+		std::cout << std::endl;
+	}
 }
